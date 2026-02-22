@@ -34,91 +34,68 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
-exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const fs = __importStar(require("fs"));
 const path = __importStar(require("path"));
-const bookmarkRegex = /<!--doc\s+(\S+?)\s+-->/;
-const ghostRegex = /<!--inline\s+(\S+?)\s+-->/;
+const TRIGGER = "@idoc";
+const REGEX = /@idoc ([^:]+):?(.+)?/;
 function activate(context) {
-    const provider = vscode.languages.registerCompletionItemProvider([
-        { scheme: "file", language: "python" },
-        { scheme: "file", language: "javascript" },
-        { scheme: "file", language: "typescript" },
-    ], {
-        provideCompletionItems(document, position, token, context) {
-            const line = document.lineAt(position.line).text;
-            const match = line.match(bookmarkRegex);
-            if (!match)
-                return [];
-            const fileName = match[1].trim();
-            const baseDir = path.dirname(document.uri.fsPath);
-            const fullPath = path.resolve(baseDir, fileName);
-            try {
-                if (!fs.existsSync(fullPath))
-                    return [];
-                const content = fs.readFileSync(fullPath, "utf8");
-                return [
-                    {
-                        label: `Inline ${path.basename(fileName)}`,
-                        insertText: content,
-                        documentation: `Inserts content from ${fileName}`,
-                        kind: vscode.CompletionItemKind.File,
-                        detail: content,
-                    },
-                ];
-            }
-            catch (error) {
-                return [];
-            }
-        },
-    }, ">");
-    // Ghost text provider using inline completions
-    const inlineHintsProvider = vscode.languages.registerInlayHintsProvider([
-        { scheme: "file", language: "python" },
-        { scheme: "file", language: "javascript" },
-        { scheme: "file", language: "typescript" },
-    ], {
-        provideInlayHints(document, range, token) {
-            const hints = [];
-            for (let i = 0; i < document.lineCount; i++) {
-                const line = document.lineAt(i).text;
-                const match = line.match(ghostRegex);
-                if (!match)
-                    continue;
+    // 2. Definition Provider: Links the "trigger" to the virtual document
+    const definitionProvider = vscode.languages.registerDefinitionProvider({ scheme: "file" }, {
+        provideDefinition(document, position) {
+            const line = document.lineAt(position.line);
+            const match = line.text.match(REGEX);
+            if (match) {
                 const fileName = match[1].trim();
-                const baseDir = path.dirname(document.uri.fsPath);
-                const fullPath = path.resolve(baseDir, fileName);
-                try {
-                    if (!fs.existsSync(fullPath))
-                        continue;
-                    const content = fs.readFileSync(fullPath, "utf8");
-                    // Position hint at end of comment line
-                    const endOfComment = line.indexOf("-->");
-                    if (endOfComment === -1)
-                        continue;
-                    const position = new vscode.Position(i, endOfComment);
-                    const hint = new vscode.InlayHint(position, content);
-                    hint.paddingLeft = true;
-                    hints.push(hint);
+                const entryName = match[2]?.trim();
+                let fullPath;
+                if (fileName.startsWith("/")) {
+                    // From project root
+                    const workspaceFolder = vscode.workspace.getWorkspaceFolder(document.uri);
+                    if (!workspaceFolder) {
+                        vscode.window.showErrorMessage("No workspace folder found. Cannot resolve path.");
+                        return null;
+                    }
+                    fullPath = path.resolve(workspaceFolder.uri.fsPath, fileName.substring(1));
                 }
-                catch (error) {
-                    continue;
+                else {
+                    // Relative to current file
+                    const baseDir = path.dirname(document.uri.fsPath);
+                    fullPath = path.resolve(baseDir, fileName);
                 }
+                const uri = vscode.Uri.file(fullPath);
+                // `entryName` will be searched for in the file
+                const content = fs.readFileSync(fullPath, "utf8");
+                const entryLines = content.split("\n");
+                let entryStartLine = 0;
+                if (entryName) {
+                    for (let i = 0; i < entryLines.length; i++) {
+                        if (entryLines[i].includes(entryName)) {
+                            entryStartLine = i;
+                            break;
+                        }
+                    }
+                }
+                return new vscode.Location(uri, new vscode.Position(entryStartLine, 0));
             }
-            return hints;
+            return null;
         },
     });
-    // Auto-trigger suggestions
-    const selectionListener = vscode.window.onDidChangeTextEditorSelection((event) => {
-        const currentLine = event.selections[0].active.line;
-        const line = event.textEditor.document.lineAt(currentLine).text;
-        // Check current line
-        if (bookmarkRegex.test(line)) {
-            vscode.commands.executeCommand("editor.action.triggerSuggest");
-        }
+    // 3. CodeLens: Makes it clickable without needing Ctrl+Click
+    const codeLensProvider = vscode.languages.registerCodeLensProvider({ scheme: "file" }, {
+        provideCodeLenses(document) {
+            const lenses = [];
+            for (let i = 0; i < document.lineCount; i++) {
+                if (document.lineAt(i).text.includes(TRIGGER)) {
+                    lenses.push(new vscode.CodeLens(new vscode.Range(i, 0, i, 0), {
+                        title: "Peek JSON Data",
+                        command: "editor.action.peekDefinition", // Built-in VS Code command
+                    }));
+                }
+            }
+            return lenses;
+        },
     });
-    context.subscriptions.push(provider, inlineHintsProvider, selectionListener);
+    context.subscriptions.push(definitionProvider, codeLensProvider);
 }
-function deactivate() { }
 //# sourceMappingURL=extension.js.map
