@@ -3,6 +3,11 @@
   "displayName": "inline-doctool",
   "description": "allows inline documentation of large projects to be conveniently stored and managed",
   "icon": "glass.png",
+  "publisher": "Jzhyang",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Jzhyang1/inline-doctool"
+  },
   "version": "1.0.1",
   "engines": {
     "vscode": "^1.109.0"
